@@ -1,0 +1,215 @@
+---
+title: "An Introduction to the PLASTIC R-package"
+author:
+- name: "Andrew E. Teschendorff"
+  affiliation: 
+  - Shanghai Institute for Nutrition and Health, SINH
+date: "`r Sys.Date()`"
+package: plastic
+output:
+    BiocStyle::html_document:
+    toc_float: true
+bibliography: plastic.bib
+vignette: >
+  %\VignetteIndexEntry{PLASTIC - R package}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+  
+```{r vignette-options, echo=FALSE, message=FALSE, warning=FALSE}
+require(BiocStyle)
+```
+
+# Introduction
+
+The `PLASTIC` package is aimed at single-cell or single-nucleus RNA-Seq (scRNA/snRNA-Seq) studies that have profiled cells from all main stages in cancer development, including cells from normal or normal-adjacent tissues, cells from preneoplastic lesions (e.g. dysplasia, metaplasia, in-situ carcinoma) and cells from invasive cancer. PLASTIC (Predictive Landscape Analysis of Single-cell Transcriptomes In Cancer) helps quantify epigenetic reprogramming and cellular plasticity at single cell resolution, which when assessed in a precancerous cell population, could help identify cells at higher cancer-risk. This vignette is designed to illustrate the functionality of a number of R-functions for (i) quantifying epigenetic reprogramming via estimation of tissue-specific transcription factor differentiation activities (TFA) and calculation of an associated transcription factor inactivation load (TFIL), for (ii) quantifying cellular plasticity via our diffusion/signalling entropy approach, and (iii) for quantifying cancer-risk of single preneoplastic cells. Task (i) is largely based on our SCIRA-algorithm [@SCIRA], task (ii) is based on our CCAT algorithm [@CCAT], and task (iii) is largely based on our CancerStemID algorithm [@CancerStemID]. 
+
+<p>We illustrate the functionality of the package using two scRNA-seq datasets:
+<ol type="1">
+<li> a Smart-Seq2 dataset [@BEscRNAseq], encompassing 2009 cells from 4 Barrett's esophagus (BE) patients and 4 anatomical locations (normal esophagus, duodenum, stomach and BE). </li>
+<li>a 10X scRNA-Seq dataset of multi-stage development of intestinal type gastric cancer (IGC), encompassing samples from 4 stages (normal and chronic atrophic gastritis, intestinal metaplasia and early gastric cancer [@IGC].</li>
+</ol></p>
+
+
+# Loading in the libraries
+
+We begin by first loading in all necessary libraries:
+
+```{r load-libs, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+library(plastic);
+library(Seurat);
+library(destiny);
+```
+
+
+# Estimating Transcription Factor Differentiation Activity (TFA)
+
+First we shall focus on the BE scRNA-Seq dataset, which will nicely illustrate the value of estimating the differentiation activity of TFs that are specific for different tissue-types. BE is a form of intestinal metaplasia, where the normal squamous epithelium of the esophagus gets replaced by intestinal cells (enterocytes/goblets) normally found in the colon. Because this scRNA-Seq dataset also contains samples from the duodenum and stomach, in addition to normal esophagus and BE, it will serve for validation that our way of estimating TFA is correct. Thus, we first load in the regulatory networks for esophagus, colon and stomach:
+```{r load-nets, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+data(netCOLON);
+data(netESOPH);
+data(netGASTRIC);
+```
+These regulatory networks are derived from the multi-tissue RNA-Seq GTEX dataset using the SCIRA algorithm [@SCIRA]. Very briefly, SCIRA identifies tissue-specific TFs by overexpression analysis, comparing one tissue of interest to the rest, and separately again by comparing the tissue of interest to blood and spleen, to ensure that TFs are not specific to immune-cells. Regulons for the TFs are derived using a greedy partial correlation strategy, resulting in a pool of direct and indirect TF-binding targets that faithfully represent upstream TF binding activity. The end result for each tissue-type, is a regulatory network consisting of tissue-specific TFs and their regulons, which we can represent as a bi-partite network (matrix) with rows labeling gene-targets and columns labeling the TFs. Values in the matrix are 0 if a gene is not in the regulon of a given TF, +1 if it is positively correlated with it, and -1 if it is negatively correlated. For instance, we can check the dimensionality of the esophageal regulatory network
+
+```{r esoph1, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+print(dim(netESOPH.m));
+```
+
+Hence, there are 43 esophageal-specific TFs. The reader can easily check that the mean number of genes in a TF-regulon is 43, with regulon sizes ranging from 10 to 159. Of note, both gene targets and TFs have been annotated to NCBI identifiers. To estimate differentiation activity (TFA) of these TFs, we would need to load in the scRNA-Seq dataset itself, but due to size limitations, we here just illustrate the code for estimating TFA. Assuming the log-normalized scRNA-Seq data is stored in a data matrix `data` with rownames annotated to NCBI identifiers we would then apply the `EstTFA` function to this data matrix, using the esophageal-specific regulons as input:
+
+```{r estimateTFA, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+#tfaESOPH.m <- EstTFA(data,netESOPH.m,norm=c("z"),ncores=4);
+data(tfaBE);
+print(dim(tfaESOPH.m));
+```
+In the above, we used the z-score normalization option, which z-score normalizes the scRNA-Seq data matrix prior to estimating differentiation activity. The resulting TFA-matrix is defined over 43 TFs and 2009 epithelial cells. The same procedure could be applied to the other two regulatory networks for colon and stomach:
+
+```{r estimateTFA1, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+#tfaCOLON.m <- EstTFA(data,netCOLON.m,norm=c("z"),ncores=4);
+#tfaGASTRIC.m <- EstTFA(data,netGASTRIC.m,norm=c("z"),ncores=4);
+print(dim(tfaCOLON.m));
+print(dim(tfaGASTRIC.m));
+```
+When loading in `tfaBE` we also load in the phenotype information of the 2009 epithelial cells, in particular which anatomical location they derive from. Of note, the data used to estimate all the TFA values was already normalized and batch-corrected across the 4 individuals. To see how many cells map to each location, we do:
+```{r phenoBE, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+print(summary(factor(phenoBE.v)));
+```
+
+Let us now study the distribution of TFA values for the different tissue-specific TFs across anatomical locations. To simplify, we take the mean TFA over TFs:
+
+```{r boxplots1, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+par(mfrow=c(2,2));
+par(mar=c(4,4,2,1));
+boxplot(colMeans(tfaGASTRIC.m) ~ phenoBE.v,col=c("tomato","skyblue","orange","olivedrab"),xlab="",ylab="TFA",main="Gastric-TFs");
+boxplot(colMeans(tfaESOPH.m) ~ phenoBE.v,col=c("tomato","skyblue","orange","olivedrab"),xlab="",ylab="TFA",main="Esophageal-TFs");
+boxplot(colMeans(tfaCOLON.m) ~ phenoBE.v,col=c("tomato","skyblue","orange","olivedrab"),xlab="",ylab="TFA",main="Colon-TFs");
+```
+
+From the above we can see that the TFA of gastric-specific TFs is highest in the normal gastric samples, which is what we would expect. Further note, how the TFA of esophageal TFs is highest in the normal esophagus and that it is substantially decreased in BE, consistent with the loss of squamous epithelial cells. Further observe how the TFA of colon-TFs increases in BE compared to normal esophagus consistent with the intestinal metaplasia nature of BE. Moreover, the TFA of colon-TFs in BE is as high as in Duodenum which is the location that is closest to colon. Thus, the above patterns of TFA values across anatomical location are in line with what we would expect, thus validating the TFA estimation procedure as well as the underlying regulons.
+
+
+# Application of PLASTIC to study development of intestinal gastric cancer (IGC)
+
+Next, we apply PLASTIC to the development of intestinal gastric cancer, which is a type of gastric cancer that begins with normal and chronic atrophic gastritis (NAG/CAG), then proceeding to intestinal metaplasia (IM) and ending in IGC. We consider a 10X scRNA-Seq encompassing 32,724 epithelial cells [@IGC], encompassing 4327 cells from NAG, 12130 from CAG, 13455 from IM and 2902 from IGC. Due to size limitations, we don't read in the scRNA-Seq dataset. Instead, we read in the estimated TFA-values for gastric TFs, which would have estimated using a procedure analogous to the one described in the earlier section:
+
+```{r plasticIGC1, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+data(dataIGC);
+print(dim(tfaIGC.m));
+```
+
+First, we check to see what happens to the average TFA of these gastric-specific TFs as disease progresses between the 4 stages NAG, CAG, IM and EGC:
+
+```{r plasticIGC2, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+phenoIGC.v <- phenoIGC.df$stage;
+boxplot(colMeans(tfaIGC.m) ~ phenoIGC.v,names=c("NAG","CAG","IM","EGC"));
+```
+
+We can see that there is a marked reduction in TF differentiation activity between IM and EGC, but also a hint of a trend towards lower TFA in IM vs the combined NAG/CAG stage. A reasonable hypothesis is that the IM cells that have undergone a higher level of epigenetic reprogramming are also those characterized by a higher cellular plasticity. To explore this important question, we first compute the level of epigegenetic reprogramming of each IM cell, which is accomplished by counting the number of gastric specific TFs that are inactivated in a given IM cell relative to all normal cells (here NAG+CAG). Thus, we would do the following:
+
+```{r plasticIGC3, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+pheno.v <- phenoIGC.v;
+pheno.v[pheno.v==0] <- 1; ### combine NAG and CAG
+pheno.v <- pheno.v-1; ### redefine 0 to be normal, 1=IM, 2=EGC
+tfil.o <- CompTFIL(tfaIGC.m,pheno.v,thDTFA="BF",thHits=0.05); 
+im.idx <- which(pheno.v==1);
+tfilIM.v <- tfil.o$tfil[im.idx];
+```
+In the above, `CompTFIL` computes the Transcription Factor Inactivation Load (TFIL) for each cell, which is the number of inactivated TFs in the cell compared to the normals (NAG+CAG). After we compute this for each cell, we then subselect those that are IM cells. Before computing cellular plasticity, we first check how the TFIL changes between the 4 stages:
+```{r plasticIGC4, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+boxplot(tfil.o$tfil ~ phenoIGC.v,names=c("NAG","CAG","IM","EGC"));
+```
+Observe how the TFIL distribution increases between IM and EGC, which is non-trivial as the TFIL is computed between IM and NAG/CAG. This indicates that EGC is more dedifferentiated than IM. Now, we compute the cellular plasticity of each cell. This is done using the CCAT algorithm [@CCAT]. As before, due to size limitations, we don't import the scRNA-Seq dataset (encoded below as `ndata.m`), but comment out the calculation and import the actual CCAT-values which are the estimates of cellular plasticity:
+
+```{r plasticIGC5, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+### data(ppiPC12v2);
+### ccatIGC.v <- CompCCAT(ndata.m,ppiPC12v2.m);
+```
+Of note, in the above calculation of CCAT one must also load in a PPI network model, which we have included in the package. Next, we ask if cellular plasticity correlates with the level of dedifferentiation. We study this focusing on the IM cells:
+```{r plasticIGC6, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+tfilIM2.v <- tfilIM.v;
+tfilIM2.v[tfilIM.v>=10] <- 10;
+nspg.v <- summary(factor(tfilIM2.v));
+boxplot(ccatIGC.v[im.idx] ~ tfilIM2.v,axes=FALSE,ylab="Plasticity[CCAT]",xlab="TFIL",cex=0.1);
+axis(2,las=2,cex.axis=0.75);
+axis(1,at=1:length(nspg.v),names(nspg.v),cex.axis=0.75);
+mtext(side=3,line=0.1,at=1:length(nspg.v),nspg.v,cex=0.5);
+```
+As we can see, there is a clear correlation between the level of epigenetic reprogramming and cellular plasticity among the IM cells. At this stage, we are now ready to build a Waddington landscape of the IM-stage, as we have computed the phase-space variables (TFAs) and the elevation (plasticity), defining the 3D landscape. However, before doing so, we simply proceed to compute a cancer-risk-score (CRS) for each IM cell, as this does not require the Waddington landscape. The CRS evaluates how similar a precancerous cell (i.e. IM cell) is to the cells found in invasive cancer (EGC), with the similarity kernel estimated in TDA space:
+```{r plasticIGC7, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+crs.o <- CompCancerRisk(tfaIGC.m,pheno.v,option="simple");
+crs.v <- crs.o$risk;
+boxplot(crs.v ~ tfilIM2.v,xlab="TFIL",ylab="CRS",cex=0.1);
+```
+We can see that the CRS correlates with TFIL, indicating that the higher the level of dedifferentiation, the more similar the IM cell is to those found in cancer.
+
+
+# Construction of a Waddington landscape representing the IM-states of IGC development
+
+The first step in the construction is the identification of cell-states. This requires the usual step of performing a dimensional reduction and visualization with say t-SNE on all epithelial cells, and subsequently to annotate these to certain cell-types. To see what we have in this case:
+```{r Wadd1, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+print(summary(factor(phenoIGC.df$epiCT)));
+```
+In the above, `Ent` stands for enterocytes, `GMC` for glandular mucus cells, `Gob` for goblets, `PMC` for pit mucus cells, and `PreC` for IM cells that cluster separately from goblet and enterocytes, and `EGC` for cancer cells. Of course, the enterocytes and goblets emerge predominantly in the IM-stage. It is useful to check the distribution of cells according to stage and cell-state:
+```{r Wadd2, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+table(phenoIGC.df$epiCT,c("NAG","CAG","IM","EGC")[phenoIGC.df$stage+1]);
+```
+Next, we build the diffusion map. In doing so, we include the cells from the cancer-stage, which is important to contextualize the positions of the other states:
+
+```{r Wadd3, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+imegc.idx <- which(phenoIGC.df$stage>=2);
+dmapALL.o <- DiffusionMap(data=t(tfaIGC.m[,imegc.idx]),k=20,verbose=TRUE,n_pcs=7);
+dcALL.m <- eigenvectors(dmapALL.o);
+colorDPT2.v <- c("skyblue","springgreen","orange","tomato","red","brown");
+#### some housekeeping now, to ensure that DMAP returns the map always with the same orientation
+if(max(dcALL.m[,1])< abs(min(dcALL.m[,1]))){ dcALL.m[,1] <- -dcALL.m[,1];}
+if(max(dcALL.m[,2])> abs(min(dcALL.m[,2]))){ dcALL.m[,2] <- -dcALL.m[,2];}
+plot(dcALL.m[,1],dcALL.m[,2],col=colorDPT2.v[phenoIGC.df$epiCTidx[imegc.idx]],xlab="DC1",ylab="DC2");
+legend(x=0,y=-0.1,legend=c("PMC","GMC","Ent","Gob","PreC","EGC"),col=colorDPT2.v,pt.bg=colorDPT2.v,cex=0.75,pch=21);
+```
+
+```{r Wadd4, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+#### it helps to zoom in, as many of the GMCs have a high dynamic range that obscures the more relevant precancer-states
+selCellX.idx <- intersect(which(dcALL.m[,1] < 0.015),which(dcALL.m[,1]> -0.015));
+selCellY.idx <- which(dcALL.m[,2] > -0.015);
+selCells.idx <- intersect(selCellX.idx,selCellY.idx);
+
+plot(dcALL.m[selCells.idx,1],dcALL.m[selCells.idx,2],col=colorDPT2.v[phenoIGC.df$epiCTidx[imegc.idx[selCells.idx]]],xlab="DC1",ylab="DC2");
+legend(x=0.015,y=0,legend=c("PMC","GMC","Ent","Gob","PreC","EGC"),col=colorDPT2.v,pt.bg=colorDPT2.v,cex=0.75,pch=21);
+```
+Now, we are ready to build the Waddington landscape:
+```{r Wadd5, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+epiCT.idx <- phenoIGC.df$epiCTidx[imegc.idx];
+ccat.v <- ccatIGC.v[imegc.idx];
+x.v <- seq(-0.01,0.015,0.001);
+y.v <- seq(-0.01,0.015,0.001);
+BuildWaddington(dcALL.m,epiCT.idx,ccat.v,theta=20,phi=40,selCells.idx,x.v,y.v);
+```
+
+The main attractor on the left represents the enterocytes, whilst the double attractor on the right represents the PMCs/GMCs, these last two being very close to each other, as shown by the density contour plots. The 3rd attractor appears to contain 3 underlying cellular states (according to the contours), which represent the goblets, precancerous IM-cells and the cancer cells. To study this in more detail, we can try to zoom in a bit more:
+```{r Wadd6, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+epiCT.idx <- phenoIGC.df$epiCTidx[imegc.idx];
+ccat.v <- ccatIGC.v[imegc.idx];
+x.v <- seq(-0.0015,0.005,0.00025);
+y.v <- seq(-0.0025,0.0075,0.00025);
+BuildWaddington(dcALL.m,epiCT.idx,ccat.v,theta=80,phi=40,selCells.idx,x.v,y.v);
+```
+
+We can now see more clearly the presence of the cancer-state to the right, with IM goblet and precancerous cells on the left. In order to more clearly check their plasticity levels, we can tilt the landscape by tuning the `phi` angle:
+```{r Wadd7, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+BuildWaddington(dcALL.m,epiCT.idx,ccat.v,theta=100,phi=20,selCells.idx,x.v,y.v);
+```
+This now clearly demonstrates that the bulk of the goblets have lower plasticity than the IM-precancerous and cancer-cells, with the cancer-cells displaying the highest level of plasticity (shallower attractor). Thus, PLASTIC predicts that the IM-precancerous cells seem to emerge from an abnormal progenitor goblet cell that is dedifferentiated and plastic.
+
+In summary, what we have shown here is that the TFIL of an IM cell is associated with an increased cellular plasticity and cancer-risk score. The association with the cancer-risk score effectively means that preneoplastic cells carrying more TF-inactivation events are more similar in regulatory activity phase space to cancer cells, and that this similarity also entails an increased functional plasticity.
+
+# Session information
+
+```{r sessionInfo, echo=T}
+sessionInfo()
+```
+
+# References
+
+
+

@@ -1,0 +1,15 @@
+Package: plastic
+Title: plastic
+Version: 1.0
+Description: PLASTIC (Predictive Landscape Analysis of Single-cell Transcriptomes for Identifying Cancer) is an algorithm for estimating epigenetic reprogramming and cellular plasticity from single-cell or single-nucleus RNA-Seq data. It builds upon our previous CancerStemID, SCENT and SCIRA algorithm, adding functionality.
+Date: 2025-8-10
+Author: Andrew E Teschendorff
+Maintainer: Andrew Teschendorff <andrew@sinh.ac.cn>
+Depends: R (>= 4.4.2)
+Imports: Seurat, igraph, parallel, stats, Matrix, qlcMatrix, destiny, irlba, plotrix, marray
+Suggests: roxygen2, BiocStyle, knitr, rmarkdown
+VignetteBuilder: knitr
+License: GPL-3
+LazyData: true
+NeedsCompilation: no
+RoxygenNote: 7.1.0
